@@ -199,14 +199,20 @@ docker compose $PROFILES up -d
 
 log_section "waiting for platform"
 
-PLATFORM_URL="http://localhost:${PLATFORM_PORT:-3000}"
+# Detect which protocol is enabled
+if grep -qE '^\s+- "\$\{BIND_ADDRESS\}\$\{PLATFORM_PORT' "$PROJECT_ROOT/docker-compose.yml"; then
+    PLATFORM_URL="http://localhost:${PLATFORM_PORT:-3000}"
+else
+    PLATFORM_URL="https://localhost:${PLATFORM_HTTPS_PORT:-3443}"
+fi
+
 MAX_WAIT=180
 WAIT_INTERVAL=5
 
 log_info "Waiting for Platform to be healthy (max ${MAX_WAIT}s)..."
 
 for ((i=0; i<MAX_WAIT; i+=WAIT_INTERVAL)); do
-    if curl -sf "${PLATFORM_URL}/health" &>/dev/null; then
+    if curl -sfk "${PLATFORM_URL}/health" &>/dev/null; then
         log_info "Platform is healthy!"
         break
     fi
@@ -289,7 +295,13 @@ fi
 echo "             Username: admin"
 echo "             Password: admin"
 echo ""
-echo "  Gateway4:  http://localhost:${GATEWAY4_PORT:-8083}"
+if grep -qE '^\s+- "\$\{BIND_ADDRESS\}\$\{GATEWAY4_PORT' "$PROJECT_ROOT/docker-compose.yml"; then
+    echo "  Gateway4:  http://localhost:${GATEWAY4_PORT:-8083}"
+elif grep -qE '^\s+- "\$\{BIND_ADDRESS\}\$\{GATEWAY4_HTTPS_PORT' "$PROJECT_ROOT/docker-compose.yml"; then
+    echo "  Gateway4:  https://localhost:${GATEWAY4_HTTPS_PORT:-8443}"
+else
+    echo "  Gateway4:  https://localhost:${GATEWAY4_HTTPS_PORT:-8443}"
+fi
 echo "             Username: admin@itential"
 echo "             Password: admin"
 echo ""

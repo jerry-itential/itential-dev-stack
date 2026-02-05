@@ -18,6 +18,7 @@ GID ?= $(shell id -g)
 PLATFORM_PORT ?= 3000
 PLATFORM_HTTPS_PORT ?= 3443
 GATEWAY4_PORT ?= 8083
+GATEWAY4_HTTPS_PORT ?= 8443
 LDAP_PORT ?= 3389
 MCP_SSE_PORT ?= 8000
 OPENBAO_PORT ?= 8200
@@ -69,7 +70,13 @@ status: ## Show service status and URLs
 	else \
 		echo "  Platform:  https://localhost:$(PLATFORM_HTTPS_PORT)  (admin/admin)"; \
 	fi
-	@echo "  Gateway4:  http://localhost:$(GATEWAY4_PORT)  (admin@itential/admin)"
+	@if grep -qE '^\s+- "\$${BIND_ADDRESS}\$${GATEWAY4_PORT' docker-compose.yml; then \
+		echo "  Gateway4:  http://localhost:$(GATEWAY4_PORT)  (admin@itential/admin)"; \
+	elif grep -qE '^\s+- "\$${BIND_ADDRESS}\$${GATEWAY4_HTTPS_PORT' docker-compose.yml; then \
+		echo "  Gateway4:  https://localhost:$(GATEWAY4_HTTPS_PORT)  (admin@itential/admin)"; \
+	else \
+		echo "  Gateway4:  https://localhost:$(GATEWAY4_HTTPS_PORT)  (admin@itential/admin)"; \
+	fi
 	@if docker ps --format '{{.Names}}' | grep -q '^openldap$$'; then \
 		echo "  OpenLDAP:  localhost:$(LDAP_PORT)  (cn=admin,dc=itential,dc=io/admin)"; \
 	fi

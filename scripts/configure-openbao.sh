@@ -137,7 +137,7 @@ KV_ENABLED=$(echo "$MOUNTS_RESPONSE" | jq -r '.["secret/"] // empty')
 if [ -z "$KV_ENABLED" ]; then
     log_info "Enabling KV v2 secrets engine at secret/..."
 
-    ENABLE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${OPENBAO_URL}/v1/sys/mounts/secret" \
+    ENABLE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST "${OPENBAO_URL}/v1/sys/mounts/secret" \
         -H "X-Vault-Token: ${ROOT_TOKEN}" \
         -H "Content-Type: application/json" \
         -d '{"type": "kv", "options": {"version": "2"}}' 2>/dev/null)
@@ -256,7 +256,12 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
     log_info "Configuring Vault adapter in Platform..."
 
     # Platform API settings
-    PLATFORM_URL="http://localhost:${PLATFORM_PORT:-3000}"
+    # Detect which protocol is enabled
+    if grep -qE '^\s+- "\$\{BIND_ADDRESS\}\$\{PLATFORM_PORT' "$PROJECT_ROOT/docker-compose.yml"; then
+        PLATFORM_URL="http://localhost:${PLATFORM_PORT:-3000}"
+    else
+        PLATFORM_URL="https://localhost:${PLATFORM_HTTPS_PORT:-3443}"
+    fi
     ADMIN_USER="${PLATFORM_USER:-admin}"
     ADMIN_PASSWORD="${PLATFORM_PASSWORD:-admin}"
     COOKIE_JAR=$(mktemp)
@@ -278,7 +283,7 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
     MAX_WAIT=120
     PLATFORM_READY=false
     for ((i=0; i<MAX_WAIT; i+=2)); do
-        if curl -sf "${PLATFORM_URL}/health" &>/dev/null; then
+        if curl -sfk "${PLATFORM_URL}/health" &>/dev/null; then
             log_info "Platform is accessible"
             PLATFORM_READY=true
             break
@@ -303,14 +308,14 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
         if [ "$LDAP_ENABLED" = "true" ]; then
 
             # LDAP is enabled - use LDAP admin (local admin won't work)
-            LOGIN_RESPONSE=$(curl -s -X POST "${PLATFORM_URL}/login" \
+            LOGIN_RESPONSE=$(curl -sk -X POST "${PLATFORM_URL}/login" \
                 -H "Content-Type: application/json" \
                 -c "$COOKIE_JAR" \
                 -d '{"username":"admin@itential","password":"admin"}' 2>/dev/null)
         else
 
             # no LDAP - use local admin
-            LOGIN_RESPONSE=$(curl -s -X POST "${PLATFORM_URL}/login" \
+            LOGIN_RESPONSE=$(curl -sk -X POST "${PLATFORM_URL}/login" \
                 -H "Content-Type: application/json" \
                 -c "$COOKIE_JAR" \
                 -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null)
@@ -318,7 +323,7 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
 
         # verify authentication by testing an API call
         if [ -n "$LOGIN_RESPONSE" ]; then
-            TEST_RESPONSE=$(curl -s -w "\n%{http_code}" "${PLATFORM_URL}/adapters?limit=1" -b "$COOKIE_JAR" 2>/dev/null)
+            TEST_RESPONSE=$(curl -sk -w "\n%{http_code}" "${PLATFORM_URL}/adapters?limit=1" -b "$COOKIE_JAR" 2>/dev/null)
             TEST_CODE=$(echo "$TEST_RESPONSE" | tail -1)
             if [ "$TEST_CODE" = "200" ]; then
                 AUTH_SUCCESS=true
@@ -332,7 +337,7 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
 
             # check if adapter exists
             log_info "Checking for HashiCorpVault adapter..."
-            ADAPTER_CHECK=$(curl -s -w "\n%{http_code}" "${PLATFORM_URL}/adapters/HashiCorpVault" -b "$COOKIE_JAR" 2>/dev/null)
+            ADAPTER_CHECK=$(curl -sk -w "\n%{http_code}" "${PLATFORM_URL}/adapters/HashiCorpVault" -b "$COOKIE_JAR" 2>/dev/null)
             ADAPTER_CODE=$(echo "$ADAPTER_CHECK" | tail -1)
             ADAPTER_RESPONSE=$(echo "$ADAPTER_CHECK" | sed '$d')
 
@@ -360,7 +365,7 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
             # create adapter if needed
             if [ "$ADAPTER_EXISTS" = "false" ]; then
                 log_info "Creating HashiCorpVault adapter..."
-                CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${PLATFORM_URL}/adapters" \
+                CREATE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST "${PLATFORM_URL}/adapters" \
                     -H "Content-Type: application/json" \
                     -b "$COOKIE_JAR" \
                     -d '{
@@ -408,7 +413,7 @@ if [ -d "$VAULT_ADAPTER_DIR" ]; then
 }
 EOF
 )
-                CONFIG_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${PLATFORM_URL}/adapters/HashiCorpVault/properties" \
+                CONFIG_RESPONSE=$(curl -sk -w "\n%{http_code}" -X PUT "${PLATFORM_URL}/adapters/HashiCorpVault/properties" \
                     -H "Content-Type: application/json" \
                     -b "$COOKIE_JAR" \
                     -d "$VAULT_PROPERTIES" 2>/dev/null)
@@ -421,7 +426,7 @@ EOF
                     log_info "Waiting for Vault adapter to activate..."
                     MAX_WAIT=30
                     for ((j=0; j<MAX_WAIT; j+=2)); do
-                        ADAPTER_STATUS=$(curl -sf "${PLATFORM_URL}/adapters/HashiCorpVault" -b "$COOKIE_JAR" 2>/dev/null) || true
+                        ADAPTER_STATUS=$(curl -sfk "${PLATFORM_URL}/adapters/HashiCorpVault" -b "$COOKIE_JAR" 2>/dev/null) || true
                         IS_ACTIVE=$(echo "$ADAPTER_STATUS" | jq -r '.metadata.isActive // false' 2>/dev/null) || true
                         if [ "$IS_ACTIVE" = "true" ]; then
                             log_info "Vault adapter is active"
@@ -452,7 +457,7 @@ log_info "Creating example secrets for manual property encryption testing..."
 
 # create example secret for demonstrating $SECRET syntax
 EXAMPLE_SECRET_PATH="secret/data/example/credentials"
-EXAMPLE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${OPENBAO_URL}/v1/${EXAMPLE_SECRET_PATH}" \
+EXAMPLE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST "${OPENBAO_URL}/v1/${EXAMPLE_SECRET_PATH}" \
     -H "X-Vault-Token: ${ROOT_TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{"data": {"username": "demo_user", "password": "demo_password", "api_key": "demo_api_key_12345"}}' 2>/dev/null)

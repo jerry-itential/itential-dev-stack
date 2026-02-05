@@ -29,7 +29,14 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 # configuration
-PLATFORM_URL="${PLATFORM_URL:-http://localhost:${PLATFORM_PORT:-3000}}"
+# Detect which protocol is enabled
+if [ -z "$PLATFORM_URL" ]; then
+    if grep -qE '^\s+- "\$\{BIND_ADDRESS\}\$\{PLATFORM_PORT' "$PROJECT_ROOT/docker-compose.yml"; then
+        PLATFORM_URL="http://localhost:${PLATFORM_PORT:-3000}"
+    else
+        PLATFORM_URL="https://localhost:${PLATFORM_HTTPS_PORT:-3443}"
+    fi
+fi
 ADMIN_USER="admin"
 ADMIN_PASSWORD="admin"
 
@@ -48,7 +55,7 @@ log_info "Platform URL: $PLATFORM_URL"
 log_info "Waiting for Platform API..."
 MAX_WAIT=60
 for ((i=0; i<MAX_WAIT; i+=2)); do
-    if curl -sf "${PLATFORM_URL}/" &>/dev/null; then
+    if curl -sfk "${PLATFORM_URL}/" &>/dev/null; then
         log_info "Platform is accessible"
         break
     fi
@@ -66,7 +73,7 @@ sleep "$PLATFORM_INIT_DELAY"
 
 # authenticate
 log_info "Authenticating as admin..."
-LOGIN_RESPONSE=$(curl -sf -X POST "${PLATFORM_URL}/login" \
+LOGIN_RESPONSE=$(curl -sfk -X POST "${PLATFORM_URL}/login" \
     -H "Content-Type: application/json" \
     -c "$COOKIE_JAR" \
     -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null) || {
@@ -78,7 +85,7 @@ log_info "Authenticated successfully"
 # fetch local admin's roles now (before LDAP takes over auth)
 log_info "Fetching local admin roles..."
 LOCAL_ADMIN_ID="000000000000000000000000"
-ADMIN_ACCOUNT=$(curl -sf "${PLATFORM_URL}/authorization/accounts/${LOCAL_ADMIN_ID}" -b "$COOKIE_JAR" 2>/dev/null)
+ADMIN_ACCOUNT=$(curl -sfk "${PLATFORM_URL}/authorization/accounts/${LOCAL_ADMIN_ID}" -b "$COOKIE_JAR" 2>/dev/null)
 if [ -n "$ADMIN_ACCOUNT" ]; then
     ADMIN_ROLES=$(echo "$ADMIN_ACCOUNT" | jq -c '[.assignedRoles[].roleId]')
     ROLE_COUNT=$(echo "$ADMIN_ROLES" | jq 'length')
@@ -90,7 +97,7 @@ fi
 
 # check if LDAP adapter exists, create if not
 log_info "Checking for LDAP adapter..."
-ADAPTER_CHECK=$(curl -s -w "\n%{http_code}" "${PLATFORM_URL}/adapters/LDAP" -b "$COOKIE_JAR" 2>/dev/null)
+ADAPTER_CHECK=$(curl -sk -w "\n%{http_code}" "${PLATFORM_URL}/adapters/LDAP" -b "$COOKIE_JAR" 2>/dev/null)
 ADAPTER_CODE=$(echo "$ADAPTER_CHECK" | tail -1)
 ADAPTER_RESPONSE=$(echo "$ADAPTER_CHECK" | sed '$d')
 
@@ -116,7 +123,7 @@ if [ "$ADAPTER_EXISTS" = "false" ]; then
     # adapter doesn't exist - create it
     log_info "LDAP adapter not found, creating..."
 
-    CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${PLATFORM_URL}/adapters" \
+    CREATE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST "${PLATFORM_URL}/adapters" \
         -H "Content-Type: application/json" \
         -b "$COOKIE_JAR" \
         -d '{
@@ -142,7 +149,7 @@ if [ "$ADAPTER_EXISTS" = "false" ]; then
     log_info "LDAP adapter created"
 
     # fetch adapter info after creation
-    ADAPTER_RESPONSE=$(curl -sf "${PLATFORM_URL}/adapters/LDAP" -b "$COOKIE_JAR" 2>/dev/null) || {
+    ADAPTER_RESPONSE=$(curl -sfk "${PLATFORM_URL}/adapters/LDAP" -b "$COOKIE_JAR" 2>/dev/null) || {
         log_error "Failed to fetch LDAP adapter after creation"
         exit 1
     }
@@ -194,7 +201,7 @@ EOF
 
 # configure LDAP adapter properties (this activates it)
 log_info "Configuring LDAP adapter properties..."
-RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${PLATFORM_URL}/adapters/LDAP/properties" \
+RESPONSE=$(curl -sk -w "\n%{http_code}" -X PUT "${PLATFORM_URL}/adapters/LDAP/properties" \
     -H "Content-Type: application/json" \
     -b "$COOKIE_JAR" \
     -d "$LDAP_PROPERTIES" 2>/dev/null)
@@ -213,7 +220,7 @@ log_info "LDAP adapter properties configured"
 log_info "Waiting for LDAP adapter to activate..."
 MAX_WAIT=30
 for ((i=0; i<MAX_WAIT; i+=2)); do
-    ADAPTER_STATUS=$(curl -sf "${PLATFORM_URL}/adapters/LDAP" -b "$COOKIE_JAR" 2>/dev/null) || true
+    ADAPTER_STATUS=$(curl -sfk "${PLATFORM_URL}/adapters/LDAP" -b "$COOKIE_JAR" 2>/dev/null) || true
     IS_ACTIVE=$(echo "$ADAPTER_STATUS" | jq -r '.metadata.isActive // false' 2>/dev/null) || true
     if [ "$IS_ACTIVE" = "true" ]; then
         log_info "LDAP adapter is active"
@@ -228,7 +235,7 @@ done
 
 # provision LDAP user by doing a login (this creates the account in Platform)
 log_info "Provisioning LDAP user admin@itential..."
-LDAP_LOGIN=$(curl -sf -X POST "${PLATFORM_URL}/login" \
+LDAP_LOGIN=$(curl -sfk -X POST "${PLATFORM_URL}/login" \
     -H "Content-Type: application/json" \
     -d '{"username":"admin@itential","password":"admin"}' 2>/dev/null) || {
     log_warn "LDAP login failed (user may need to be provisioned manually)"

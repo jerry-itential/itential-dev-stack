@@ -28,7 +28,7 @@ wait_for_gateway_manager_api() {
 
     for ((i=0; i<max_wait; i+=interval)); do
         local http_code
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        http_code=$(curl -sk -o /dev/null -w "%{http_code}" \
             "${PLATFORM_URL}/gateway_manager/v1/certificates" \
             -b "$COOKIE_JAR" 2>/dev/null)
 
@@ -56,7 +56,14 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 # configuration
-PLATFORM_URL="${PLATFORM_URL:-http://localhost:${PLATFORM_PORT:-3000}}"
+# Detect which protocol is enabled
+if [ -z "$PLATFORM_URL" ]; then
+    if grep -qE '^\s+- "\$\{BIND_ADDRESS\}\$\{PLATFORM_PORT' "$PROJECT_ROOT/docker-compose.yml"; then
+        PLATFORM_URL="http://localhost:${PLATFORM_PORT:-3000}"
+    else
+        PLATFORM_URL="https://localhost:${PLATFORM_HTTPS_PORT:-3443}"
+    fi
+fi
 
 # default admin credentials for initial setup
 ADMIN_USER="admin"
@@ -95,7 +102,7 @@ MAX_WAIT=60
 for ((i=0; i<MAX_WAIT; i+=2)); do
 
     # is platform responding?
-    if curl -sf "${PLATFORM_URL}/" &>/dev/null; then
+    if curl -sfk "${PLATFORM_URL}/" &>/dev/null; then
         log_info "Platform is accessible"
         break
     fi
@@ -113,7 +120,7 @@ sleep "$PLATFORM_INIT_DELAY"
 
 # initial setup done with `admin`
 log_info "Authenticating as admin..."
-LOGIN_RESPONSE=$(curl -sf -X POST "${PLATFORM_URL}/login" \
+LOGIN_RESPONSE=$(curl -sfk -X POST "${PLATFORM_URL}/login" \
     -H "Content-Type: application/json" \
     -c "$COOKIE_JAR" \
     -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null) || {
@@ -137,7 +144,7 @@ ALL_ROLE_IDS=""
 lookup_all_roles() {
     log_info "Looking up all role IDs..."
     local roles_response
-    roles_response=$(curl -sf "${PLATFORM_URL}/authorization/roles?limit=200" -b "$COOKIE_JAR" 2>/dev/null)
+    roles_response=$(curl -sfk "${PLATFORM_URL}/authorization/roles?limit=200" -b "$COOKIE_JAR" 2>/dev/null)
 
     # build json array of all role ids -> for assignment
     ALL_ROLE_IDS=$(echo "$roles_response" | jq -c '[.results[] | {roleId: ._id}]')
@@ -170,7 +177,7 @@ upload_certificate() {
 
     # do certs already exist?
     local existing_id
-    existing_id=$(curl -sf "${PLATFORM_URL}/gateway_manager/v1/certificates" \
+    existing_id=$(curl -sfk "${PLATFORM_URL}/gateway_manager/v1/certificates" \
         -b "$COOKIE_JAR" 2>/dev/null | jq -r ".results[] | select(.alias == \"${cert_name}\") | ._id") || true
 
     if [ -n "$existing_id" ]; then
@@ -186,7 +193,7 @@ upload_certificate() {
 
     for ((attempt=1; attempt<=max_attempts; attempt++)); do
         local response http_code
-        response=$(curl -s -w "\n%{http_code}" -X POST "${PLATFORM_URL}/gateway_manager/v1/certificates" \
+        response=$(curl -sk -w "\n%{http_code}" -X POST "${PLATFORM_URL}/gateway_manager/v1/certificates" \
             -H "Content-Type: application/json" \
             -b "$COOKIE_JAR" \
             -d "{\"raw_certificate\":${cert_content},\"contract_id\":\"${cert_name}\",\"alias\":\"${cert_name}\"}" 2>/dev/null)
@@ -206,7 +213,7 @@ upload_certificate() {
             # if id extraction fails but http returns 200, certificate may still be uploaded
             # does it exist now?
             sleep 1
-            existing_id=$(curl -sf "${PLATFORM_URL}/gateway_manager/v1/certificates" \
+            existing_id=$(curl -sfk "${PLATFORM_URL}/gateway_manager/v1/certificates" \
                 -b "$COOKIE_JAR" 2>/dev/null | jq -r ".results[] | select(.alias == \"${cert_name}\") | ._id") || true
             if [ -n "$existing_id" ]; then
                 log_info "Certificate '$cert_name' uploaded (ID: $existing_id)"
@@ -217,7 +224,7 @@ upload_certificate() {
 
         # already exists!
         if [ "$http_code" = "409" ]; then
-            existing_id=$(curl -sf "${PLATFORM_URL}/gateway_manager/v1/certificates" \
+            existing_id=$(curl -sfk "${PLATFORM_URL}/gateway_manager/v1/certificates" \
                 -b "$COOKIE_JAR" 2>/dev/null | jq -r ".results[] | select(.alias == \"${cert_name}\") | ._id") || true
             if [ -n "$existing_id" ]; then
                 log_info "Certificate '$cert_name' already exists (ID: $existing_id)"
@@ -251,14 +258,14 @@ ensure_admin_group() {
 
     # does group exist?
     local existing
-    existing=$(curl -sf "${PLATFORM_URL}/authorization/groups?limit=100" \
+    existing=$(curl -sfk "${PLATFORM_URL}/authorization/groups?limit=100" \
         -b "$COOKIE_JAR" 2>/dev/null | jq -r ".results[] | select(.name == \"${group_name}\") | ._id") || true
 
     if [ -n "$existing" ]; then
         log_info "Group '$group_name' already exists (ID: $existing), updating with all roles..." >&2
 
         # update group with ALL roles
-        curl -sf -X PATCH "${PLATFORM_URL}/authorization/groups/${existing}" \
+        curl -sfk -X PATCH "${PLATFORM_URL}/authorization/groups/${existing}" \
             -H "Content-Type: application/json" \
             -b "$COOKIE_JAR" \
             -d "{\"updates\":{\"assignedRoles\":${ALL_ROLE_IDS}}}" 2>/dev/null > /dev/null || true
@@ -269,7 +276,7 @@ ensure_admin_group() {
     # create group with ALL roles
     log_info "Creating group '$group_name' with all roles..." >&2
     local response
-    response=$(curl -sf -X POST "${PLATFORM_URL}/authorization/groups" \
+    response=$(curl -sfk -X POST "${PLATFORM_URL}/authorization/groups" \
         -H "Content-Type: application/json" \
         -b "$COOKIE_JAR" \
         -d "{\"group\":{\"name\":\"${group_name}\",\"provenance\":\"Pronghorn\",\"description\":\"Admin group with full permissions\",\"assignedRoles\":${ALL_ROLE_IDS},\"memberOf\":[],\"inactive\":false}}" 2>/dev/null) || {
@@ -303,7 +310,7 @@ assign_user_permissions() {
         '{updates: {memberOf: [{aaaManaged: false, groupId: $gid}], assignedRoles: $roles}}')
 
     local response
-    response=$(curl -s -X PATCH "${PLATFORM_URL}/authorization/accounts/${account_id}" \
+    response=$(curl -sk -X PATCH "${PLATFORM_URL}/authorization/accounts/${account_id}" \
         -H "Content-Type: application/json" \
         -b "$COOKIE_JAR" \
         -d "$payload" 2>/dev/null)
@@ -322,7 +329,7 @@ create_gateway() {
 
     # does gateway already exist?
     local existing
-    existing=$(curl -sf "${PLATFORM_URL}/gateway_manager/v1/gateways" \
+    existing=$(curl -sfk "${PLATFORM_URL}/gateway_manager/v1/gateways" \
         -b "$COOKIE_JAR" 2>/dev/null | jq -r ".results[]? | select(.cluster_id == \"${CLUSTER_ID}\") | .cluster_id") || true
 
     if [ "$existing" = "$CLUSTER_ID" ]; then
@@ -338,7 +345,7 @@ create_gateway() {
     # gateway requires a group and certificate reference for link to work
     # note: gateway_name is required by some Platform versions (e.g., flowai)
     local response http_code
-    response=$(curl -s -w "\n%{http_code}" -X POST "${PLATFORM_URL}/gateway_manager/v1/gateways" \
+    response=$(curl -sk -w "\n%{http_code}" -X POST "${PLATFORM_URL}/gateway_manager/v1/gateways" \
         -H "Content-Type: application/json" \
         -b "$COOKIE_JAR" \
         -d "{\"gateway\":{\"gateway_name\":\"${CLUSTER_ID}\",\"cluster_id\":\"${CLUSTER_ID}\",\"description\":\"Auto-configured gateway\",\"enabled\":true,\"readonly\":false,\"certificates\":[\"${CERT_ID}\"],\"groups\":[\"admin_group\"]}}" 2>/dev/null)
@@ -364,7 +371,7 @@ verify_connection() {
         local response
 
         # check all connections and look for our cluster
-        response=$(curl -sf "${PLATFORM_URL}/gateway_manager/v1/connections" \
+        response=$(curl -sfk "${PLATFORM_URL}/gateway_manager/v1/connections" \
             -b "$COOKIE_JAR" 2>/dev/null) || true
         if [ -n "$response" ] && echo "$response" | jq -e ".\"${CLUSTER_ID}\"" &>/dev/null; then
             log_info "Gateway5 connected successfully!"

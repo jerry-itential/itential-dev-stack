@@ -111,7 +111,8 @@ REDIS_VERSION=7.4
 # Ports (if defaults conflict)
 PLATFORM_HTTPS_PORT=3443
 PLATFORM_PORT=3000          # HTTP disabled by default (uncomment in docker-compose.yml to enable)
-GATEWAY4_PORT=8083
+GATEWAY4_HTTPS_PORT=8443
+GATEWAY4_PORT=8083          # HTTP disabled by default (uncomment in docker-compose.yml to enable)
 GATEWAY5_PORT=50051
 
 # Logging
@@ -126,7 +127,7 @@ PLATFORM_INIT_DELAY=15
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Platform | https://localhost:3443 | admin / admin |
-| Gateway4 | http://localhost:8083 | admin@itential / admin |
+| Gateway4 | https://localhost:8443 | admin@itential / admin |
 | Gateway5 | localhost:50051 (gRPC) | Use `iagctl` client |
 | OpenLDAP | localhost:3389 | cn=admin,dc=itential,dc=io / admin |
 | MCP | http://localhost:8000 (SSE) | N/A |

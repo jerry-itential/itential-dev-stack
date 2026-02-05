@@ -203,7 +203,8 @@ services:
       - "automation-gateway"
       - "--sync-config"
     ports:
-      - "${BIND_ADDRESS}${GATEWAY4_PORT:-8083}:8083"
+      # - "${BIND_ADDRESS}${GATEWAY4_PORT:-8083}:8083"  # Uncomment to enable HTTP
+      - "${BIND_ADDRESS}${GATEWAY4_HTTPS_PORT:-8443}:8443"
     volumes:
       - gateway4-data:/var/lib/automation-gateway
       - gateway4-app:/opt/automation-gateway
@@ -230,7 +231,10 @@ services:
       ANSIBLE_IGNORE_CERTS: "true"
 
       # system
-      automation_gateway_port: 8083
+      automation_gateway_port: 8443
+      automation_gateway_server_certfile: "/etc/ssl/gateway/cert.pem"
+      automation_gateway_server_keyfile: "/etc/ssl/gateway/key.pem"
+      automation_gateway_server_ssl_version: "TLSv1_2"
       automation_gateway_authentication_disabled: "false"
       automation_gateway_authentication_max_sessions: 5000
       automation_gateway_authentication_idle_timeout: 600
@@ -277,7 +281,7 @@ services:
       automation_gateway_git_enabled: "true"
       automation_gateway_vault_enabled: "false"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8083/"]
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://localhost:8443/ 2>/dev/null || wget -q -O /dev/null http://localhost:8083/ 2>/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 5

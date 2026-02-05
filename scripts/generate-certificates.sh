@@ -1,11 +1,12 @@
 #!/bin/bash
-# Generate SSL certificates for Platform and Gateway5 integration
+# Generate SSL certificates for Platform, Gateway4, and Gateway5 integration
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PLATFORM_SSL_DIR="$PROJECT_ROOT/volumes/platform/ssl"
+GATEWAY4_SSL_DIR="$PROJECT_ROOT/volumes/gateway4/ssl"
 GATEWAY5_CERTS_DIR="$PROJECT_ROOT/volumes/gateway5/certificates"
 
 # defaults
@@ -72,6 +73,7 @@ fi
 
 # create directories
 mkdir -p "$PLATFORM_SSL_DIR"
+mkdir -p "$GATEWAY4_SSL_DIR"
 mkdir -p "$GATEWAY5_CERTS_DIR"
 
 # check if cert file exists and is valid
@@ -102,7 +104,7 @@ should_generate() {
 }
 
 # --- platform ssl ---
-log "[1/2] checking platform ssl certificates..."
+log "[1/3] checking platform ssl certificates..."
 
 if should_generate "$PLATFORM_SSL_DIR/cert.pem" "$PLATFORM_SSL_DIR/key.pem"; then
     log_info "generating platform ssl certificates..."
@@ -127,9 +129,36 @@ else
     log_success "platform ssl certificates already exist (use --force to regenerate)"
 fi
 
+# --- gateway4 ssl ---
+log ""
+log "[2/3] checking gateway4 ssl certificates..."
+
+if should_generate "$GATEWAY4_SSL_DIR/cert.pem" "$GATEWAY4_SSL_DIR/key.pem"; then
+    log_info "generating gateway4 ssl certificates..."
+    openssl req -x509 -newkey rsa:4096 \
+        -keyout "$GATEWAY4_SSL_DIR/key.pem" \
+        -out "$GATEWAY4_SSL_DIR/cert.pem" \
+        -days 1825 -nodes \
+        -subj "/CN=localhost" \
+        -addext "subjectAltName=DNS:localhost,DNS:gateway4,IP:127.0.0.1" \
+        -addext "basicConstraints=CA:FALSE" \
+        -addext "keyUsage=digitalSignature,keyEncipherment" \
+        -addext "extendedKeyUsage=serverAuth" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        log_success "gateway4 ssl certificates generated"
+        log "  location: $GATEWAY4_SSL_DIR"
+    else
+        echo "✗ failed to generate gateway4 ssl certificates"
+        exit 1
+    fi
+else
+    log_success "gateway4 ssl certificates already exist (use --force to regenerate)"
+fi
+
 # --- gateway5 certs ---
 log ""
-log "[2/2] checking gateway5 certificates..."
+log "[3/3] checking gateway5 certificates..."
 
 if should_generate "$GATEWAY5_CERTS_DIR/gw-manager.pem" "$GATEWAY5_CERTS_DIR/gw-manager-key.pem"; then
     log_info "generating gateway5 client certificates..."
@@ -166,6 +195,10 @@ else
     log_warn "skipping ownership change (requires root)"
 fi
 
+# gateway4 runs as uid specified in .env (default: current user)
+# ownership is handled by docker user directive, so world-readable is sufficient
+log_success "gateway4 ssl directory readable by container user"
+
 # gateway5 runs as uid 100
 if command -v chown &> /dev/null && [ "$(id -u)" = "0" ]; then
     chown -R 100:101 "$GATEWAY5_CERTS_DIR"
@@ -176,6 +209,7 @@ fi
 
 # make files readable
 chmod 644 "$PLATFORM_SSL_DIR"/*.pem 2>/dev/null || true
+chmod 644 "$GATEWAY4_SSL_DIR"/*.pem 2>/dev/null || true
 chmod 644 "$GATEWAY5_CERTS_DIR"/*.pem 2>/dev/null || true
 log_success "file permissions set to 644"
 
