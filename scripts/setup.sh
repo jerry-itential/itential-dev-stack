@@ -254,6 +254,16 @@ else
     log_warn "configure-gateway-manager.sh not found"
 fi
 
+# configure gateway5 secret store if gateway5 is running
+if docker ps --format '{{.Names}}' | grep -q '^gateway5$'; then
+    log_section "gateway5 secret store"
+
+    "$SCRIPT_DIR/configure-gateway5-secrets.sh" || {
+        log_warn "Gateway5 secret store configuration skipped"
+        log_info "Run manually later: make gateway5-secrets"
+    }
+fi
+
 # configure LDAP adapter if enabled
 if [ "$LDAP_ENABLED" = "true" ]; then
     log_section "ldap configuration"

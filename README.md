@@ -204,6 +204,7 @@ Different platform images may run as different UIDs. The init container sets log
 | `make up` | Start services |
 | `make gateway5` | Deploy Itential Gateway 5 standalone, no Platform |
 | `make gateway5-openbao` | Deploy Itential Gateway 5 + OpenBao side by side (no wiring) |
+| `make gateway5-secrets` | Generate the Gateway5 secret store key (runs automatically on deploy) |
 | `make down` | Stop services |
 | `make logs` | Follow all logs (or: `make logs LOG=platform`) |
 | `make status` | Show status and URLs |
@@ -338,6 +339,15 @@ Tear down with `make down`, which stops Gateway5 and OpenBao together.
 > **Note**: An empty `GATEWAY5_CONNECT_HOSTS` is invalid for Gateway5 and causes a startup
 > panic, so the compose default always resolves to a non-empty host (`platform:8080`).
 > Override it via `.env` to target a different Gateway Manager.
+
+### Secret Store
+
+Gateway5 encrypts local secrets (`iagctl create secret`) with a key file. `make setup`,
+`make up`, `make gateway5`, and `make gateway5-openbao` generate it on first deploy at
+`/etc/gateway/gateway_secrets_encryption.key`, inside the `gateway5-data` volume next to
+`gateway.db`. Existing keys are never overwritten; run `make gateway5-secrets` to create one
+by hand. `make clean` removes the key along with the secrets it encrypts. See
+[Configure the secret store](https://docs.itential.com/itential-gateway/5/configure-secret-store).
 
 ## 🔧 Installing Adapters
 

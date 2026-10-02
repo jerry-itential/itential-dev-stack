@@ -1,7 +1,7 @@
 # Itential Dev Stack
 # run 'make help' to see available commands
 
-.PHONY: help setup up down logs status certs login clean generate-key gateway5 gateway5-openbao iag5 iag5-openbao _ensure-gateway5-image
+.PHONY: help setup up down logs status certs login clean generate-key gateway5 gateway5-openbao gateway5-secrets iag5 iag5-openbao _ensure-gateway5-image
 
 .DEFAULT_GOAL := help
 
@@ -64,18 +64,24 @@ setup: ## First-time setup (generates key, certs, starts services, configures Ga
 
 up: ## Start all services
 	@docker compose $(PROFILES) up -d
+	@if docker ps --format '{{.Names}}' | grep -q '^gateway5$$'; then ./scripts/configure-gateway5-secrets.sh; fi
 	@$(MAKE) --no-print-directory status
 
 gateway5: _ensure-gateway5-image ## Deploy Itential Gateway 5 standalone, no Platform
 	@./scripts/generate-certificates.sh --quiet
 	@$(GATEWAY5_STANDALONE_ENV) docker compose --profile gateway5 up -d
+	@./scripts/configure-gateway5-secrets.sh
 	@$(MAKE) --no-print-directory status
 
 gateway5-openbao: _ensure-gateway5-image ## Deploy Itential Gateway 5 + OpenBao side by side (no wiring)
 	@./scripts/generate-certificates.sh --quiet
 	@$(GATEWAY5_STANDALONE_ENV) docker compose --profile gateway5 --profile openbao up -d
 	@./scripts/configure-openbao.sh --init-only
+	@./scripts/configure-gateway5-secrets.sh
 	@$(MAKE) --no-print-directory status
+
+gateway5-secrets: ## Generate the Gateway5 secret store key (runs automatically on deploy)
+	@./scripts/configure-gateway5-secrets.sh
 
 # deprecated aliases for the pre-rename target names (hidden from help); remove in a future release
 iag5:
