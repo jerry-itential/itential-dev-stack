@@ -41,7 +41,7 @@ wait_for_gateway_manager_api() {
     done
 
     log_warn "Gateway Manager API readiness timeout, proceeding anyway..."
-    return 1
+    return 0
 }
 
 # check for jq (required for JSON handling)
@@ -59,7 +59,7 @@ fi
 PLATFORM_URL="${PLATFORM_URL:-http://localhost:${PLATFORM_PORT:-3000}}"
 
 # default admin credentials for initial setup
-ADMIN_USER="admin"
+ADMIN_USER="${GATEWAY_ADMIN_USER:-admin}"
 ADMIN_PASSWORD="admin"
 
 CLUSTER_ID="${GATEWAY5_CLUSTER_ID:-cluster_1}"
@@ -123,9 +123,6 @@ LOGIN_RESPONSE=$(curl -sf -X POST "${PLATFORM_URL}/login" \
 
 if [ -n "$LOGIN_RESPONSE" ]; then
     log_info "Authenticated successfully"
-
-    # wait for gateway manager api before proceeding
-    wait_for_gateway_manager_api
 fi
 
 # role ids for permissions (looked up dynamically)
@@ -336,15 +333,27 @@ create_gateway() {
     fi
 
     # gateway requires a group and certificate reference for link to work
-    # note: gateway_name is required by some Platform versions (e.g., flowai)
-    local response http_code
-    response=$(curl -s -w "\n%{http_code}" -X POST "${PLATFORM_URL}/gateway_manager/v1/gateways" \
-        -H "Content-Type: application/json" \
-        -b "$COOKIE_JAR" \
-        -d "{\"gateway\":{\"gateway_name\":\"${CLUSTER_ID}\",\"cluster_id\":\"${CLUSTER_ID}\",\"description\":\"Auto-configured gateway\",\"enabled\":true,\"readonly\":false,\"certificates\":[\"${CERT_ID}\"],\"groups\":[\"admin_group\"]}}" 2>/dev/null)
+    # gateway_name is rejected by newer Platform versions (additional properties) and required by
+    # some others (e.g., flowai), so try without it first and retry with it on a validation error
+    local response http_code gateway_json with_name
+    for with_name in false true; do
+        local name_field=""
+        [ "$with_name" = true ] && name_field="\"gateway_name\":\"${CLUSTER_ID}\","
+        gateway_json="{\"gateway\":{${name_field}\"cluster_id\":\"${CLUSTER_ID}\",\"description\":\"Auto-configured gateway\",\"enabled\":true,\"readonly\":false,\"certificates\":[\"${CERT_ID}\"],\"groups\":[\"admin_group\"]}}"
 
-    http_code=$(echo "$response" | tail -1)
-    response=$(echo "$response" | sed '$d')
+        response=$(curl -s -w "\n%{http_code}" -X POST "${PLATFORM_URL}/gateway_manager/v1/gateways" \
+            -H "Content-Type: application/json" \
+            -b "$COOKIE_JAR" \
+            -d "$gateway_json" 2>/dev/null)
+
+        http_code=$(echo "$response" | tail -1)
+        response=$(echo "$response" | sed '$d')
+
+        case "$http_code" in
+            400|422) continue ;;
+            *) break ;;
+        esac
+    done
 
     if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
         log_info "Gateway cluster created with certificate and enabled"
@@ -376,6 +385,27 @@ verify_connection() {
     return 0
 }
 
+# --- second pass: create the gateway as admin@itential ---
+# On newer Platform versions the built-in admin is refused with "User must be a member of at least
+# one of the assigned groups with roles: gateway:read and gateway:update" even when it has every
+# role, while a regular user succeeds. setup.sh runs this pass after LDAP is configured and roles
+# are synced, with GATEWAY_ONLY=true GATEWAY_ADMIN_USER=admin@itential.
+if [ "${GATEWAY_ONLY:-}" = true ]; then
+    if [ -z "$LOGIN_RESPONSE" ]; then
+        log_error "Could not authenticate as ${ADMIN_USER}"
+        exit 1
+    fi
+    log_info "=== Gateway creation (as ${ADMIN_USER}) ==="
+    upload_certificate || log_warn "Could not confirm certificate"
+    if create_gateway; then
+        verify_connection
+        log_info "Gateway cluster '$CLUSTER_ID' is configured"
+        exit 0
+    fi
+    log_error "Gateway creation failed"
+    exit 1
+fi
+
 # --- phase 1: setup ---
 # upload cert / create admin group
 
@@ -391,18 +421,13 @@ if [ -n "$LOGIN_RESPONSE" ]; then
         log_warn "Could not look up roles, gateway creation may fail"
     fi
 
-    # upload cert
-    if upload_certificate; then
-        CERT_UPLOADED=true
-    fi
-
     # create admin_group with ALL roles
-    GROUP_ID=$(ensure_admin_group)
+    GROUP_ID=$(ensure_admin_group) || GROUP_ID=""
+    ROLES_ASSIGNED=false
     if [ -n "$GROUP_ID" ]; then
         GROUP_CREATED=true
 
         # assign roles and group membership to admin user
-        ROLES_ASSIGNED=false
         ADMIN_ACCOUNT_ID="000000000000000000000000"  # built-in admin has fixed id
         if assign_user_permissions "$ADMIN_ACCOUNT_ID" "$GROUP_ID"; then
             ROLES_ASSIGNED=true
@@ -412,8 +437,21 @@ if [ -n "$LOGIN_RESPONSE" ]; then
         fi
     fi
 
+    # gateway manager endpoints need the gateway roles assigned above
+    wait_for_gateway_manager_api
+
+    # upload cert
+    if upload_certificate; then
+        CERT_UPLOADED=true
+    fi
+
     # attempt gateway creation (requires roles to be assigned)
-    if [ "$CERT_UPLOADED" = true ] && [ "$GROUP_CREATED" = true ] && [ "$ROLES_ASSIGNED" = true ]; then
+    if [ "$CERT_UPLOADED" = true ] && [ "$GROUP_CREATED" = true ] && [ "$ROLES_ASSIGNED" = true ] \
+        && [ "$LDAP_ENABLED" = "true" ]; then
+        # creation is done by setup.sh as admin@itential once LDAP is configured
+        log_info "Certificate and group ready, gateway creation deferred until LDAP user is configured"
+        exit 0
+    elif [ "$CERT_UPLOADED" = true ] && [ "$GROUP_CREATED" = true ] && [ "$ROLES_ASSIGNED" = true ]; then
         log_info "Attempting gateway cluster creation..."
         if create_gateway; then
             GATEWAY_CREATED=true

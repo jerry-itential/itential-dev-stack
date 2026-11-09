@@ -294,6 +294,16 @@ else
     log_warn "sync-admin-roles.sh not found"
 fi
 
+# create the gateway as admin@itential now that LDAP is configured and roles are synced
+if [ "$LDAP_ENABLED" = "true" ]; then
+    log_section "gateway creation"
+    GATEWAY_ONLY=true GATEWAY_ADMIN_USER="admin@itential" PLATFORM_INIT_DELAY=0 \
+        "$SCRIPT_DIR/configure-gateway-manager.sh" || {
+        log_warn "Gateway creation skipped"
+        log_info "Run manually later: GATEWAY_ONLY=true GATEWAY_ADMIN_USER=admin@itential ./scripts/configure-gateway-manager.sh"
+    }
+fi
+
 log_section "setup complete"
 
 echo ""
