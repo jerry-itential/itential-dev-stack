@@ -46,7 +46,8 @@ endif
 
 # standalone gateway5/openbao deploys load the full compose file, which references the
 # Platform-only ITENTIAL_ENCRYPTION_KEY; supply a placeholder so loading succeeds without
-# a .env (the platform service is never started under these profiles)
+# a .env (the platform service is never started under these profiles). down, logs,
+# status, and clean reuse it so they also work after a standalone deploy
 GATEWAY5_STANDALONE_ENV := ITENTIAL_ENCRYPTION_KEY=$${ITENTIAL_ENCRYPTION_KEY:-gateway5-standalone-unused}
 
 help: ## Show available commands
@@ -100,14 +101,14 @@ _ensure-gateway5-image:
 	}
 
 down: ## Stop all services
-	@docker compose --profile full --profile ldap --profile mcp --profile openbao down
+	@$(GATEWAY5_STANDALONE_ENV) docker compose --profile full --profile ldap --profile mcp --profile openbao down
 
 logs: ## Follow logs (all services, or: make logs LOG=platform)
-	@docker compose logs -f $(LOG)
+	@$(GATEWAY5_STANDALONE_ENV) docker compose logs -f $(LOG)
 
 status: ## Show service status and URLs
 	@echo ""
-	@docker compose --profile full --profile ldap --profile mcp --profile openbao ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+	@$(GATEWAY5_STANDALONE_ENV) docker compose --profile full --profile ldap --profile mcp --profile openbao ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 	@echo ""
 	@echo "URLs:"
 	@echo "  Platform:  http://localhost:$(PLATFORM_PORT)  (admin/admin)"
@@ -145,7 +146,7 @@ clean: ## Stop services and remove data (destructive)
 	@echo "WARNING: This will delete all container data."
 	@echo "Press Ctrl+C within 3 seconds to cancel..."
 	@sleep 3
-	@docker compose --profile full --profile ldap --profile mcp --profile openbao down -v
+	@$(GATEWAY5_STANDALONE_ENV) docker compose --profile full --profile ldap --profile mcp --profile openbao down -v
 	@docker rm -f $$(docker ps -aq --filter "ancestor=ghcr.io/itential/itential-mcp") 2>/dev/null || true
 	@docker volume rm itential-dev-stack_gateway5-data 2>/dev/null || true
 	@docker volume rm itential-dev-stack_openbao-data 2>/dev/null || true
